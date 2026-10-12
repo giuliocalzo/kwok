@@ -148,6 +148,73 @@ func TestNodeLeaseController(t *testing.T) {
 	}
 }
 
+func TestNodeLeaseControllerOnLeaseRenewed(t *testing.T) {
+	now := time.Now()
+	clientset := fake.NewClientset(
+		&coordinationv1.Lease{
+			Name:        "node0",
+			Namespace:   corev1.NamespaceNodeLease,
+			Annotations: map[string]string{nodeIPAnnotation: "10.0.0.1"},
+			Spec: coordinationv1.LeaseSpec{
+				HolderIdentity:       new("previous"),
+				RenewTime:            new(metav1.NewMicroTime(now.Add(-61 * time.Second))),
+				LeaseDurationSeconds: new(int32(60)),
+			},
+		},
+	)
+
+	ctx := context.Background()
+	ctx = log.NewContext(ctx, log.NewLogger(os.Stderr, log.LevelDebug))
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	t.Cleanup(cancel)
+
+	nodeLeasesCli := clientset.CoordinationV1().Leases(corev1.NamespaceNodeLease)
+	leasesInformer := informer.NewInformer[*coordinationv1.Lease, *coordinationv1.LeaseList](nodeLeasesCli)
+	cache, err := leasesInformer.WatchWithCache(ctx, informer.Option{}, nil)
+	if err != nil {
+		t.Fatal(fmt.Errorf("watch node leases error: %w", err))
+	}
+
+	renewed := make(chan *coordinationv1.Lease, 10)
+	nodeLeases, err := NewNodeLeaseController(NodeLeaseControllerConfig{
+		TypedClient: clientset,
+		GetLease: func(nodeName string) (*coordinationv1.Lease, bool) {
+			return cache.GetWithNamespace(nodeName, corev1.NamespaceNodeLease)
+		},
+		HolderIdentity:       "test",
+		LeaseDurationSeconds: 40,
+		LeaseParallelism:     1,
+		RenewInterval:        10 * time.Second,
+		RenewIntervalJitter:  0.04,
+		OnLeaseRenewedFunc: func(_ context.Context, lease *coordinationv1.Lease) {
+			renewed <- lease
+		},
+	})
+	if err != nil {
+		t.Fatal(fmt.Errorf("new node leases controller error: %w", err))
+	}
+
+	time.Sleep(1 * time.Second)
+
+	err = nodeLeases.Start(ctx)
+	if err != nil {
+		t.Fatal(fmt.Errorf("start node leases controller error: %w", err))
+	}
+	nodeLeases.TryHold("node0")
+
+	select {
+	case lease := <-renewed:
+		if got := *lease.Spec.HolderIdentity; got != "test" {
+			t.Errorf("holder = %q, want %q", got, "test")
+		}
+		if got := lease.Annotations[nodeIPAnnotation]; got != "10.0.0.1" {
+			t.Errorf("marker = %q, want the previous holder's %q", got, "10.0.0.1")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnLeaseRenewedFunc was not called after taking over the lease")
+	}
+}
+
 func Test_tryAcquireOrRenew(t *testing.T) {
 	now := time.Now()
 	type args struct {

@@ -52,8 +52,9 @@ type NodeLeaseController struct {
 	delayQueue   queue.WeightDelayingQueue[string]
 	holdLeaseSet utilsmaps.SyncMap[string, bool]
 
-	holderIdentity    string
-	onNodeManagedFunc func(nodeName string)
+	holderIdentity     string
+	onNodeManagedFunc  func(nodeName string)
+	onLeaseRenewedFunc func(ctx context.Context, lease *coordinationv1.Lease)
 }
 
 // NodeLeaseControllerConfig is the configuration for NodeLeaseController
@@ -68,6 +69,7 @@ type NodeLeaseControllerConfig struct {
 	RenewIntervalJitter  float64
 	MutateLeaseFunc      func(*coordinationv1.Lease) error
 	OnNodeManagedFunc    func(nodeName string)
+	OnLeaseRenewedFunc   func(ctx context.Context, lease *coordinationv1.Lease)
 }
 
 // NewNodeLeaseController constructs and returns a NodeLeaseController
@@ -92,6 +94,7 @@ func NewNodeLeaseController(conf NodeLeaseControllerConfig) (*NodeLeaseControlle
 		delayQueue:           queue.NewWeightDelayingQueue[string](conf.Clock),
 		holderIdentity:       conf.HolderIdentity,
 		onNodeManagedFunc:    conf.OnNodeManagedFunc,
+		onLeaseRenewedFunc:   conf.OnLeaseRenewedFunc,
 	}
 
 	return c, nil
@@ -197,6 +200,9 @@ func (c *NodeLeaseController) sync(ctx context.Context, nodeName string, first b
 		// it is first or it has been transitioned, and then manage the node.
 		if first || transitions {
 			c.onNodeManaged(nodeName)
+		}
+		if c.onLeaseRenewedFunc != nil {
+			c.onLeaseRenewedFunc(ctx, lease)
 		}
 		return lease, nil
 	}
