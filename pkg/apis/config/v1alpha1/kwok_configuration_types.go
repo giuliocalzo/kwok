@@ -157,6 +157,28 @@ type KwokConfigurationOptions struct {
 	// EnablePodsOnNodeSyncStreamWatch enables stream watch for workers to sync pods on nodes.
 	// +default=false
 	EnablePodsOnNodeSyncStreamWatch *bool `json:"enablePodsOnNodeSyncStreamWatch"`
+
+	// LeaderElection holds the leader election configuration.
+	LeaderElection LeaderElectionConfiguration `json:"leaderElection"`
+}
+
+// LeaderElectionConfiguration provides configuration for leader election.
+type LeaderElectionConfiguration struct {
+	// LeaderElect makes kwok gain leadership before running the controllers,
+	// so several replicas can run with only one active.
+	// is the default value for flag --leader-elect
+	// +default=false
+	LeaderElect *bool `json:"leaderElect,omitempty"`
+
+	// ResourceName is the name of the lease used for leader election.
+	// is the default value for flag --leader-elect-resource-name
+	// +default="kwok-controller"
+	ResourceName string `json:"resourceName,omitempty"`
+
+	// ResourceNamespace is the namespace of the lease used for leader election.
+	// Empty means the namespace kwok runs in, or kube-system outside a cluster.
+	// is the default value for flag --leader-elect-resource-namespace
+	ResourceNamespace string `json:"resourceNamespace,omitempty"`
 }
 
 // TracingConfiguration provides versioned configuration for OpenTelemetry tracing clients.

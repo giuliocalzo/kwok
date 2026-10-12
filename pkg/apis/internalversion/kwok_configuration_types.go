@@ -109,6 +109,19 @@ type KwokConfigurationOptions struct {
 
 	// EnablePodsOnNodeSyncStreamWatch enables stream watch for workers to sync pods on nodes.
 	EnablePodsOnNodeSyncStreamWatch bool
+
+	// LeaderElection holds the leader election configuration.
+	LeaderElection LeaderElectionConfiguration
+}
+
+// LeaderElectionConfiguration provides configuration for leader election.
+type LeaderElectionConfiguration struct {
+	// LeaderElect makes kwok gain leadership before running the controllers.
+	LeaderElect bool
+	// ResourceName is the name of the lease used for leader election.
+	ResourceName string
+	// ResourceNamespace is the namespace of the lease used for leader election.
+	ResourceNamespace string
 }
 
 // TracingConfiguration provides versioned configuration for OpenTelemetry tracing clients.

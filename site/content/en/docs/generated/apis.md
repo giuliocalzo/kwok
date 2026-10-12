@@ -2696,6 +2696,19 @@ bool
 <p>EnablePodsOnNodeSyncStreamWatch enables stream watch for workers to sync pods on nodes.</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>leaderElection</code>
+<em>
+<a href="#config.kwok.x-k8s.io/v1alpha1.LeaderElectionConfiguration">
+LeaderElectionConfiguration
+</a>
+</em>
+</td>
+<td>
+<p>LeaderElection holds the leader election configuration.</p>
+</td>
+</tr>
 </tbody>
 </table>
 <h3 id="config.kwok.x-k8s.io/v1alpha1.KwokctlConfigurationOptions">
@@ -4113,6 +4126,65 @@ string
 </td>
 <td>
 <p>Version is the version of the kwokctl.</p>
+</td>
+</tr>
+</tbody>
+</table>
+<h3 id="config.kwok.x-k8s.io/v1alpha1.LeaderElectionConfiguration">
+LeaderElectionConfiguration
+<a href="#config.kwok.x-k8s.io%2fv1alpha1.LeaderElectionConfiguration"> #</a>
+</h3>
+<p>
+<em>Appears on: </em>
+<a href="#config.kwok.x-k8s.io/v1alpha1.KwokConfigurationOptions">KwokConfigurationOptions</a>
+</p>
+<p>
+<p>LeaderElectionConfiguration provides configuration for leader election.</p>
+</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>leaderElect</code>
+<em>
+bool
+</em>
+</td>
+<td>
+<p>LeaderElect makes kwok gain leadership before running the controllers,
+so several replicas can run with only one active.
+is the default value for flag &ndash;leader-elect</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>resourceName</code>
+<em>
+string
+</em>
+</td>
+<td>
+<p>ResourceName is the name of the lease used for leader election.
+is the default value for flag &ndash;leader-elect-resource-name</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>resourceNamespace</code>
+<em>
+string
+</em>
+</td>
+<td>
+<p>ResourceNamespace is the namespace of the lease used for leader election.
+Empty means the namespace kwok runs in, or kube-system outside a cluster.
+is the default value for flag &ndash;leader-elect-resource-namespace</p>
 </td>
 </tr>
 </tbody>

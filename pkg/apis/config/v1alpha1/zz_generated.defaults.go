@@ -74,6 +74,13 @@ func SetObjectDefaults_KwokConfiguration(in *KwokConfiguration) {
 		var ptrVar1 bool = false
 		in.Options.EnablePodsOnNodeSyncStreamWatch = &ptrVar1
 	}
+	if in.Options.LeaderElection.LeaderElect == nil {
+		var ptrVar1 bool = false
+		in.Options.LeaderElection.LeaderElect = &ptrVar1
+	}
+	if in.Options.LeaderElection.ResourceName == "" {
+		in.Options.LeaderElection.ResourceName = "kwok-controller"
+	}
 }
 
 func SetObjectDefaults_KwokctlConfiguration(in *KwokctlConfiguration) {
