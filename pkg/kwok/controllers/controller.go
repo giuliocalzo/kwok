@@ -250,6 +250,21 @@ func (c *Controller) initNodeLeaseController(ctx context.Context) error {
 	renewInterval := leaseDuration / 4
 	// https://github.com/kubernetes/component-helpers/blob/d17b6f1e84500ee7062a26f5327dc73cb3e9374a/apimachinery/lease/controller.go#L100
 	renewIntervalJitter := 0.04
+	setNodeOwner := setNodeOwnerFunc(func(nodeName string) []metav1.OwnerReference {
+		node, ok := c.nodeCacheGetter.Get(nodeName)
+		if !ok {
+			return nil
+		}
+		ownerReferences := []metav1.OwnerReference{
+			{
+				APIVersion: nodeKind.Version,
+				Kind:       nodeKind.Kind,
+				Name:       node.Name,
+				UID:        node.UID,
+			},
+		}
+		return ownerReferences
+	})
 	c.nodeLeases, err = NewNodeLeaseController(NodeLeaseControllerConfig{
 		Clock:                c.conf.Clock,
 		TypedClient:          c.conf.TypedClient,
@@ -260,22 +275,18 @@ func (c *Controller) initNodeLeaseController(ctx context.Context) error {
 		},
 		RenewInterval:       renewInterval,
 		RenewIntervalJitter: renewIntervalJitter,
-		MutateLeaseFunc: setNodeOwnerFunc(func(nodeName string) []metav1.OwnerReference {
-			node, ok := c.nodeCacheGetter.Get(nodeName)
-			if !ok {
-				return nil
+		MutateLeaseFunc: func(lease *coordinationv1.Lease) error {
+			err := setNodeOwner(lease)
+			if err != nil {
+				return err
 			}
-			ownerReferences := []metav1.OwnerReference{
-				{
-					APIVersion: nodeKind.Version,
-					Kind:       nodeKind.Kind,
-					Name:       node.Name,
-					UID:        node.UID,
-				},
+			if node, ok := c.nodeCacheGetter.Get(lease.Name); ok {
+				recordNodeIP(lease, node, c.conf.NodeIP)
 			}
-			return ownerReferences
-		}),
-		HolderIdentity: c.conf.ID,
+			return nil
+		},
+		OnLeaseRenewedFunc: c.repointNodeIP,
+		HolderIdentity:     c.conf.ID,
 		OnNodeManagedFunc: func(nodeName string) {
 			c.nodeManageQueue.Add(nodeName)
 			c.podOnNodeManageQueue.Add(nodeName)
@@ -333,6 +344,29 @@ func (c *Controller) nodeLeaseSyncWorker(ctx context.Context) {
 
 		// Avoid slow cache synchronization, which may be judged as unmanaged.
 		c.nodes.ManageNode(node)
+	}
+}
+
+// repointNodeIP moves a node still pointing at a previous lease holder to this instance.
+func (c *Controller) repointNodeIP(ctx context.Context, lease *coordinationv1.Lease) {
+	node, ok := c.nodeCacheGetter.Get(lease.Name)
+	if !ok {
+		return
+	}
+	logger := log.FromContext(ctx)
+	repointed, err := repointNodeIP(ctx, c.conf.TypedClient, lease, node, c.conf.NodeIP)
+	if err != nil {
+		logger.Error("Failed to repoint node IP",
+			"err", err,
+			"node", node.Name,
+		)
+		return
+	}
+	if repointed {
+		logger.Info("Repointed node IP",
+			"node", node.Name,
+			"ip", c.conf.NodeIP,
+		)
 	}
 }
 
