@@ -122,6 +122,7 @@ type Config struct {
 	NodePlayStageParallelism              uint
 	NodeLeaseDurationSeconds              uint
 	NodeLeaseParallelism                  uint
+	NodeLeaseTakeOverGroup                string
 	PodsOnNodeSyncParallelism             uint
 	EnablePodsOnNodeSyncListPager         bool
 	EnablePodsOnNodeSyncStreamWatch       bool
@@ -287,6 +288,7 @@ func (c *Controller) initNodeLeaseController(ctx context.Context) error {
 		},
 		OnLeaseRenewedFunc: c.repointNodeIP,
 		HolderIdentity:     c.conf.ID,
+		TakeOverGroup:      c.conf.NodeLeaseTakeOverGroup,
 		OnNodeManagedFunc: func(nodeName string) {
 			c.nodeManageQueue.Add(nodeName)
 			c.podOnNodeManageQueue.Add(nodeName)

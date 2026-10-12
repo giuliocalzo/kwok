@@ -375,3 +375,102 @@ func TestExpireTime(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeLeaseControllerTakeOverLeases(t *testing.T) {
+	const group = "kube-system/kwok-controller"
+	now := time.Now()
+	leaseRenewedAt := func(name, holder string, renewTime time.Time, annotations map[string]string) *coordinationv1.Lease {
+		return &coordinationv1.Lease{
+			Name:        name,
+			Namespace:   corev1.NamespaceNodeLease,
+			Annotations: annotations,
+			Spec: coordinationv1.LeaseSpec{
+				HolderIdentity:       new(holder),
+				RenewTime:            new(metav1.NewMicroTime(renewTime)),
+				LeaseDurationSeconds: new(int32(60)),
+			},
+		}
+	}
+	clientset := fake.NewClientset(
+		leaseRenewedAt("same-group", "previous-leader", now, map[string]string{takeOverGroupAnnotation: group}),
+		leaseRenewedAt("no-group", "kubelet", now, nil),
+		leaseRenewedAt("other-group", "other-leader", now, map[string]string{takeOverGroupAnnotation: "kube-system/other"}),
+		leaseRenewedAt("expired", "old-kwok", now.Add(-61*time.Second), nil),
+	)
+
+	ctx := context.Background()
+	ctx = log.NewContext(ctx, log.NewLogger(os.Stderr, log.LevelDebug))
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	t.Cleanup(cancel)
+
+	nodeLeasesCli := clientset.CoordinationV1().Leases(corev1.NamespaceNodeLease)
+	leasesInformer := informer.NewInformer[*coordinationv1.Lease, *coordinationv1.LeaseList](nodeLeasesCli)
+	cache, err := leasesInformer.WatchWithCache(ctx, informer.Option{}, nil)
+	if err != nil {
+		t.Fatal(fmt.Errorf("watch node leases error: %w", err))
+	}
+
+	nodeLeases, err := NewNodeLeaseController(NodeLeaseControllerConfig{
+		TypedClient: clientset,
+		GetLease: func(nodeName string) (*coordinationv1.Lease, bool) {
+			return cache.GetWithNamespace(nodeName, corev1.NamespaceNodeLease)
+		},
+		HolderIdentity:       "test",
+		LeaseDurationSeconds: 40,
+		LeaseParallelism:     1,
+		RenewInterval:        10 * time.Second,
+		RenewIntervalJitter:  0.04,
+		TakeOverGroup:        group,
+	})
+	if err != nil {
+		t.Fatal(fmt.Errorf("new node leases controller error: %w", err))
+	}
+
+	time.Sleep(1 * time.Second)
+
+	err = nodeLeases.Start(ctx)
+	if err != nil {
+		t.Fatal(fmt.Errorf("start node leases controller error: %w", err))
+	}
+	for _, name := range []string{"same-group", "no-group", "other-group", "expired", "created"} {
+		nodeLeases.TryHold(name)
+	}
+
+	time.Sleep(1 * time.Second)
+
+	for name, want := range map[string]bool{"same-group": true, "expired": true, "created": true, "no-group": false, "other-group": false} {
+		if got := nodeLeases.Held(name); got != want {
+			t.Errorf("Held(%q) = %v, want %v", name, got, want)
+		}
+	}
+	for _, name := range []string{"same-group", "expired", "created"} {
+		lease, ok := cache.GetWithNamespace(name, corev1.NamespaceNodeLease)
+		if !ok {
+			t.Errorf("lease %q not found", name)
+			continue
+		}
+		if got := lease.Annotations[takeOverGroupAnnotation]; got != group {
+			t.Errorf("lease %q group = %q, want %q", name, got, group)
+		}
+	}
+}
+
+func TestNodeLeaseControllerSetTakeOverGroup(t *testing.T) {
+	stamped := func() *coordinationv1.Lease {
+		return &coordinationv1.Lease{
+			Annotations: map[string]string{takeOverGroupAnnotation: "kube-system/old"},
+		}
+	}
+
+	lease := stamped()
+	(&NodeLeaseController{takeOverGroup: "kube-system/kwok-controller"}).setTakeOverGroup(lease)
+	if got := lease.Annotations[takeOverGroupAnnotation]; got != "kube-system/kwok-controller" {
+		t.Errorf("group = %q, want %q", got, "kube-system/kwok-controller")
+	}
+
+	lease = stamped()
+	(&NodeLeaseController{}).setTakeOverGroup(lease)
+	if got, ok := lease.Annotations[takeOverGroupAnnotation]; ok {
+		t.Errorf("group = %q, want it removed without a takeover group", got)
+	}
+}

@@ -35,6 +35,9 @@ import (
 	"sigs.k8s.io/kwok/pkg/utils/wait"
 )
 
+// takeOverGroupAnnotation names the leader election group of the kwok replica that wrote a node lease.
+const takeOverGroupAnnotation = "kwok.x-k8s.io/leader-election"
+
 // NodeLeaseController is responsible for creating and renewing a lease object
 type NodeLeaseController struct {
 	typedClient          clientset.Interface
@@ -53,14 +56,19 @@ type NodeLeaseController struct {
 	holdLeaseSet utilsmaps.SyncMap[string, bool]
 
 	holderIdentity     string
+	takeOverGroup      string
 	onNodeManagedFunc  func(nodeName string)
 	onLeaseRenewedFunc func(ctx context.Context, lease *coordinationv1.Lease)
 }
 
 // NodeLeaseControllerConfig is the configuration for NodeLeaseController
 type NodeLeaseControllerConfig struct {
-	Clock                clock.Clock
-	HolderIdentity       string
+	Clock          clock.Clock
+	HolderIdentity string
+	// TakeOverGroup is written to every lease this controller writes (empty removes it), and leases
+	// held by other identities with the same group are acquired without waiting for them to expire.
+	// Only safe when at most one instance of the group is active, i.e. under leader election.
+	TakeOverGroup        string
 	TypedClient          clientset.Interface
 	LeaseDurationSeconds uint
 	LeaseParallelism     uint
@@ -93,6 +101,7 @@ func NewNodeLeaseController(conf NodeLeaseControllerConfig) (*NodeLeaseControlle
 		mutateLeaseFunc:      conf.MutateLeaseFunc,
 		delayQueue:           queue.NewWeightDelayingQueue[string](conf.Clock),
 		holderIdentity:       conf.HolderIdentity,
+		takeOverGroup:        conf.TakeOverGroup,
 		onNodeManagedFunc:    conf.OnNodeManagedFunc,
 		onLeaseRenewedFunc:   conf.OnLeaseRenewedFunc,
 	}
@@ -144,7 +153,7 @@ func (c *NodeLeaseController) syncWorker(ctx context.Context) {
 
 		now := c.clock.Now()
 		expireDuration := expireTime.Sub(now)
-		hold := tryAcquireOrRenew(lease, c.holderIdentity, now)
+		hold := c.canHold(lease, now)
 		nextTry := nextTryDuration(dur, expireDuration, hold)
 		c.delayQueue.AddWeightAfter(nodeName, 2, nextTry)
 	}
@@ -178,6 +187,24 @@ func (c *NodeLeaseController) Held(name string) bool {
 	return *lease.Spec.HolderIdentity == c.holderIdentity
 }
 
+// canHold reports whether this controller may acquire or renew the lease.
+func (c *NodeLeaseController) canHold(lease *coordinationv1.Lease, now time.Time) bool {
+	if c.takeOverGroup != "" && lease.Annotations[takeOverGroupAnnotation] == c.takeOverGroup {
+		return true
+	}
+	return tryAcquireOrRenew(lease, c.holderIdentity, now)
+}
+
+// setTakeOverGroup records the takeover group on a lease about to be written.
+// Without a group it removes any group left by a previous holder, so that group cannot take the lease over early.
+func (c *NodeLeaseController) setTakeOverGroup(lease *coordinationv1.Lease) {
+	if c.takeOverGroup == "" {
+		delete(lease.Annotations, takeOverGroupAnnotation)
+		return
+	}
+	setLeaseAnnotation(lease, takeOverGroupAnnotation, c.takeOverGroup)
+}
+
 // sync syncs a lease for a node
 func (c *NodeLeaseController) sync(ctx context.Context, nodeName string, first bool) (lease *coordinationv1.Lease, err error) {
 	logger := log.FromContext(ctx)
@@ -187,7 +214,7 @@ func (c *NodeLeaseController) sync(ctx context.Context, nodeName string, first b
 
 	lease, _ = c.getLease(nodeName)
 	if lease != nil {
-		if !tryAcquireOrRenew(lease, c.holderIdentity, c.clock.Now()) {
+		if !c.canHold(lease, c.clock.Now()) {
 			logger.Debug("Lease already acquired by another holder")
 			return nil, nil
 		}
@@ -250,6 +277,7 @@ func (c *NodeLeaseController) ensureLease(ctx context.Context, leaseName string)
 			RenewTime:            new(metav1.NewMicroTime(c.clock.Now())),
 		},
 	}
+	c.setTakeOverGroup(lease)
 	if c.mutateLeaseFunc != nil {
 		err := c.mutateLeaseFunc(lease)
 		if err != nil {
@@ -275,6 +303,7 @@ func (c *NodeLeaseController) renewLease(ctx context.Context, base *coordination
 		lease.Spec.LeaseTransitions = new(format.ElemOrDefault(lease.Spec.LeaseTransitions) + 1)
 	}
 	lease.Spec.RenewTime = new(metav1.NewMicroTime(c.clock.Now()))
+	c.setTakeOverGroup(lease)
 
 	if c.mutateLeaseFunc != nil {
 		err := c.mutateLeaseFunc(lease)
