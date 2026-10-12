@@ -12,13 +12,56 @@ tests:
   - hasDocuments:
       count: 0
 
-- it: sets the replica count
-  set:
-    replicas: 3
+- it: runs a single replica by default
   asserts:
   - equal:
       path: spec.replicas
-      value: 3
+      value: 1
+
+- it: allows scaling to zero replicas
+  set:
+    replicas: 0
+  asserts:
+  - equal:
+      path: spec.replicas
+      value: 0
+
+- it: refuses more than one replica
+  set:
+    replicas: 2
+  asserts:
+  - failedTemplate:
+      errorPattern: "replicas must be 0 or 1"
+
+- it: recreates the pod on rollout by default so two controllers never overlap
+  asserts:
+  - equal:
+      path: spec.strategy
+      value:
+        type: Recreate
+
+- it: uses the strategy from values
+  set:
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+  asserts:
+  - equal:
+      path: spec.strategy
+      value:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 0
+          maxUnavailable: 1
+
+- it: omits the strategy when it is unset
+  set:
+    strategy: null
+  asserts:
+  - notExists:
+      path: spec.strategy
 
 - it: uses the image repository, tag and pull policy from values
   set:

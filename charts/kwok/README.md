@@ -53,9 +53,10 @@ The following table lists the configurable parameters of the kwok chart and thei
 | podAnnotations | object | `{}` | Annotations added to the kwok pod. |
 | podLabels | object | `{}` | Labels added to the kwok pod. |
 | podSecurityContext | object | `{}` |  |
-| replicas | int | `1` | The replica count for Deployment. |
+| replicas | int | `1` | The replica count for Deployment, either `0` or `1`. kwok has no leader election, so every replica would run the controllers. |
 | resources | object | `{}` |  |
 | securityContext | object | `{}` |  |
+| strategy | object | `{"type":"Recreate"}` | The Deployment update strategy. `Recreate` stops the old pod before the new one starts, so two controllers never run at once during an upgrade. |
 | tolerations[0].effect | string | `"NoSchedule"` |  |
 | tolerations[0].key | string | `"node-role.kubernetes.io/control-plane"` |  |
 | tolerations[0].operator | string | `"Exists"` |  |

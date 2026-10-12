@@ -27,8 +27,14 @@ nodeSelector: {}
 resources: {}
 affinity: {}
 
-# -- The replica count for Deployment.
+# -- The replica count for Deployment, either `0` or `1`. kwok has no leader
+# election, so every replica would run the controllers.
 replicas: 1
+
+# -- The Deployment update strategy. `Recreate` stops the old pod before the
+# new one starts, so two controllers never run at once during an upgrade.
+strategy:
+  type: Recreate
 
 # -- Change `hostNetwork` to `true` if you want to deploy in a kind cluster.
 hostNetwork: false

@@ -1,4 +1,7 @@
 {{ if .Values.enableDeployment }}
+{{- if gt (int .Values.replicas) 1 }}
+{{- fail "replicas must be 0 or 1: kwok has no leader election, so every replica would run the controllers" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,6 +11,10 @@ metadata:
     {{- include "kwok.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicas }}
+  {{- with .Values.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "kwok.selectorLabels" . | nindent 6 }}
