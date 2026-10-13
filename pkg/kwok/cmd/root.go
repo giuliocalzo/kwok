@@ -268,63 +268,103 @@ func runE(ctx context.Context, flags *flagpole) error {
 
 	metrics := config.FilterWithTypeFromContext[*internalversion.Metric](ctx)
 	enableMetrics := len(metrics) != 0 || slices.Contains(flags.Options.EnableCRDs, v1alpha1.MetricKind)
-	ctr, err := controllers.NewController(controllers.Config{
-		Clock:                                 clock.RealClock{},
-		DynamicClient:                         dynamicClient,
-		RESTClient:                            restClient,
-		RESTMapper:                            restMapper,
-		ImpersonatingDynamicClient:            impersonatingDynamicClient,
-		ImpersonatingTypedClient:              impersonatingTypedClient,
-		TypedClient:                           typedClient,
-		TypedKwokClient:                       typedKwokClient,
-		EnableMetrics:                         enableMetrics,
-		EnablePodCache:                        enableMetrics,
-		ManageSingleNode:                      flags.Options.ManageSingleNode,
-		ManageAllNodes:                        flags.Options.ManageAllNodes,
-		ManageNodesWithAnnotationSelector:     flags.Options.ManageNodesWithAnnotationSelector,
-		ManageNodesWithLabelSelector:          flags.Options.ManageNodesWithLabelSelector,
-		DisregardStatusWithAnnotationSelector: flags.Options.DisregardStatusWithAnnotationSelector,
-		DisregardStatusWithLabelSelector:      flags.Options.DisregardStatusWithLabelSelector,
-		CIDR:                                  flags.Options.CIDR,
-		NodeIP:                                flags.Options.NodeIP,
-		NodeName:                              flags.Options.NodeName,
-		NodePort:                              flags.Options.NodePort,
-		PodPlayStageParallelism:               flags.Options.PodPlayStageParallelism,
-		NodePlayStageParallelism:              flags.Options.NodePlayStageParallelism,
-		LocalStages:                           groupStages,
-		NodeLeaseParallelism:                  flags.Options.NodeLeaseParallelism,
-		NodeLeaseDurationSeconds:              flags.Options.NodeLeaseDurationSeconds,
-		ID:                                    id,
-		PodsOnNodeSyncParallelism:             flags.Options.PodsOnNodeSyncParallelism,
-		EnablePodsOnNodeSyncListPager:         flags.Options.EnablePodsOnNodeSyncListPager,
-		EnablePodsOnNodeSyncStreamWatch:       flags.Options.EnablePodsOnNodeSyncStreamWatch,
+	var electionNamespace, nodeLeaseTakeOverGroup string
+	if flags.Options.LeaderElection.LeaderElect {
+		electionNamespace = leaderElectionNamespace(flags.Options.LeaderElection.ResourceNamespace, inClusterNamespaceFile)
+		nodeLeaseTakeOverGroup = electionNamespace + "/" + flags.Options.LeaderElection.ResourceName
+	}
+
+	runController := func(ctx context.Context) error {
+		ctr, err := controllers.NewController(controllers.Config{
+			Clock:                                 clock.RealClock{},
+			DynamicClient:                         dynamicClient,
+			RESTClient:                            restClient,
+			RESTMapper:                            restMapper,
+			ImpersonatingDynamicClient:            impersonatingDynamicClient,
+			ImpersonatingTypedClient:              impersonatingTypedClient,
+			TypedClient:                           typedClient,
+			TypedKwokClient:                       typedKwokClient,
+			EnableMetrics:                         enableMetrics,
+			EnablePodCache:                        enableMetrics,
+			ManageSingleNode:                      flags.Options.ManageSingleNode,
+			ManageAllNodes:                        flags.Options.ManageAllNodes,
+			ManageNodesWithAnnotationSelector:     flags.Options.ManageNodesWithAnnotationSelector,
+			ManageNodesWithLabelSelector:          flags.Options.ManageNodesWithLabelSelector,
+			DisregardStatusWithAnnotationSelector: flags.Options.DisregardStatusWithAnnotationSelector,
+			DisregardStatusWithLabelSelector:      flags.Options.DisregardStatusWithLabelSelector,
+			CIDR:                                  flags.Options.CIDR,
+			NodeIP:                                flags.Options.NodeIP,
+			NodeName:                              flags.Options.NodeName,
+			NodePort:                              flags.Options.NodePort,
+			PodPlayStageParallelism:               flags.Options.PodPlayStageParallelism,
+			NodePlayStageParallelism:              flags.Options.NodePlayStageParallelism,
+			LocalStages:                           groupStages,
+			NodeLeaseParallelism:                  flags.Options.NodeLeaseParallelism,
+			NodeLeaseDurationSeconds:              flags.Options.NodeLeaseDurationSeconds,
+			NodeLeaseTakeOverGroup:                nodeLeaseTakeOverGroup,
+			ID:                                    id,
+			PodsOnNodeSyncParallelism:             flags.Options.PodsOnNodeSyncParallelism,
+			EnablePodsOnNodeSyncListPager:         flags.Options.EnablePodsOnNodeSyncListPager,
+			EnablePodsOnNodeSyncStreamWatch:       flags.Options.EnablePodsOnNodeSyncStreamWatch,
+		})
+		if err != nil {
+			return err
+		}
+
+		err = ctr.Start(ctx)
+		if err != nil {
+			return err
+		}
+
+		return startServer(ctx, flags, ctr, typedKwokClient, tracingProvider)
+	}
+
+	if !flags.Options.LeaderElection.LeaderElect {
+		return runController(ctx)
+	}
+	return runLeaderElected(ctx, flags, typedClient, id, electionNamespace, runController)
+}
+
+// runLeaderElected serves healthz while waiting for leadership, then runs the controllers as the leader.
+func runLeaderElected(ctx context.Context, flags *flagpole, client kubernetes.Interface, id string, namespace string, run func(ctx context.Context) error) error {
+	logger := log.FromContext(ctx)
+
+	stopStandby := func() {}
+	if address := resolveServerAddress(flags); address != "" {
+		stop, err := serveStandbyHealthz(ctx, address)
+		if err != nil {
+			logger.Warn("Failed to serve standby healthz",
+				"err", err,
+			)
+		} else {
+			stopStandby = stop
+		}
+	}
+	defer stopStandby()
+
+	conf := leaderElectionConfig{
+		Client:        client,
+		Name:          flags.Options.LeaderElection.ResourceName,
+		Namespace:     namespace,
+		Identity:      id,
+		LeaseDuration: leaderElectionLeaseDuration,
+		RenewDeadline: leaderElectionRenewDeadline,
+		RetryPeriod:   leaderElectionRetryPeriod,
+	}
+	logger.Info("Waiting for leadership",
+		"lease", conf.Namespace+"/"+conf.Name,
+	)
+	return runWithLeaderElection(ctx, conf, func(ctx context.Context) error {
+		logger.Info("Became the leader")
+		stopStandby()
+		return run(ctx)
 	})
-	if err != nil {
-		return err
-	}
-
-	err = ctr.Start(ctx)
-	if err != nil {
-		return err
-	}
-
-	err = startServer(ctx, flags, ctr, typedKwokClient, tracingProvider)
-	if err != nil {
-		return err
-	}
-
-	<-ctx.Done()
-	return nil
 }
 
 func startServer(ctx context.Context, flags *flagpole, ctr *controllers.Controller, typedKwokClient versioned.Interface, tracingProvider tracing.TracerProvider) (err error) {
 	logger := log.FromContext(ctx)
 
-	serverAddress := flags.Options.ServerAddress
-	if serverAddress == "" && flags.Options.NodePort != 0 {
-		serverAddress = "0.0.0.0:" + format.String(flags.Options.NodePort)
-	}
-
+	serverAddress := resolveServerAddress(flags)
 	if serverAddress != "" {
 		clusterPortForwards := config.FilterWithTypeFromContext[*internalversion.ClusterPortForward](ctx)
 		err = checkConfigOrCRD(flags.Options.EnableCRDs, v1alpha1.ClusterPortForwardKind, clusterPortForwards)
@@ -459,6 +499,14 @@ func startServer(ctx context.Context, flags *flagpole, ctr *controllers.Controll
 
 	<-ctx.Done()
 	return nil
+}
+
+// resolveServerAddress returns the address the server listens on, or empty when the server is disabled.
+func resolveServerAddress(flags *flagpole) string {
+	if flags.Options.ServerAddress == "" && flags.Options.NodePort != 0 {
+		return "0.0.0.0:" + format.String(flags.Options.NodePort)
+	}
+	return flags.Options.ServerAddress
 }
 
 func checkConfigOrCRD[T metav1.Object](crds []string, kind string, crs []T) error {

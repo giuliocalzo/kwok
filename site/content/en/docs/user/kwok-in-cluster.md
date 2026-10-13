@@ -67,6 +67,34 @@ To override the defaults, you can add annotation `"kwok.x-k8s.io/usage-cpu"` (fo
 The resource usage simulation used above is annotation-based and the configuration is available at [here]([metrics-usage]).
 For the explanation of how it works and more complex resource usage simulation methods, please refer to [ResourceUsage configuration].
 
+## High availability
+
+By default a single `kwok` replica runs the controllers.
+To run more replicas, enable leader election: only the elected replica runs the controllers and the server, and the others serve only the health checks (`/healthz`, `/readyz`, `/livez`) until they take over.
+
+``` yaml
+apiVersion: config.kwok.x-k8s.io/v1alpha1
+kind: KwokConfiguration
+options:
+  leaderElection:
+    leaderElect: true
+```
+
+Or pass `--leader-elect`.
+The lease is `kwok-controller` in the namespace `kwok` runs in; change it with `--leader-elect-resource-name` and `--leader-elect-resource-namespace`.
+
+A replica that loses leadership exits and restarts as a standby.
+The new leader takes over at once the node leases written by the other replicas (they carry the `kwok.x-k8s.io/leader-election` annotation naming the election lease), so nodes stay Ready across a failover, and repoints each node's `InternalIP` from the old leader to itself, so `kubectl logs`, `exec`, `attach`, `port-forward` and metrics keep working.
+
+Limitations:
+
+- Repointing and the immediate node lease takeover need node leases (`nodeLeaseDurationSeconds` greater than `0`).
+- Pods that were already running keep the old leader's IP in `status.hostIP`.
+- Nodes initialized by a `kwok` version without this feature are not repointed; recreate them.
+- With `hostNetwork`, schedule the replicas on different nodes, since every replica binds the same port.
+- Standbys are Ready, so a Service in front of the `kwok` port also routes to them, and they answer only the health checks; scrape metrics from the leader directly.
+- Node leases held by anything else (a kubelet, another `kwok` deployment) still wait for their lease to expire, as without leader election; node leases written before leader election was enabled carry no annotation, so the first failover after enabling it waits up to `nodeLeaseDurationSeconds` for them.
+
 ## Next steps
 
 Now, you can use `kwok` to [manage nodes and pods] in the Kubernetes cluster.
