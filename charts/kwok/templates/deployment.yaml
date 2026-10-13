@@ -1,6 +1,6 @@
 {{ if .Values.enableDeployment }}
-{{- if gt (int .Values.replicas) 1 }}
-{{- fail "replicas must be 0 or 1: kwok has no leader election, so every replica would run the controllers" }}
+{{- if and (gt (int .Values.replicas) 1) (not .Values.leaderElection.enabled) }}
+{{- fail "replicas must be 0 or 1 unless leaderElection.enabled is true: without leader election every replica would run the controllers" }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment

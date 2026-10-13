@@ -48,15 +48,16 @@ The following table lists the configurable parameters of the kwok chart and thei
 | image.repository | string | `"registry.k8s.io/kwok/kwok"` | Image repository. |
 | image.tag | string | `""` | Overrides the image tag whose default is {{ .Chart.AppVersion }}. |
 | imagePullSecrets | list | `[]` | Image pull secrets. |
+| leaderElection.enabled | bool | `false` | Run kwok with leader election, so several replicas can run with only one active. The lease lives in the release namespace. The Service also routes to standbys, which answer only health checks, so scrape metrics from the leader pod. |
 | nameOverride | string | `""` | Override the `name` of the chart. |
 | nodeSelector | object | `{}` |  |
 | podAnnotations | object | `{}` | Annotations added to the kwok pod. |
 | podLabels | object | `{}` | Labels added to the kwok pod. |
 | podSecurityContext | object | `{}` |  |
-| replicas | int | `1` | The replica count for Deployment, either `0` or `1`. kwok has no leader election, so every replica would run the controllers. |
+| replicas | int | `1` | The replica count for Deployment. Without `leaderElection.enabled` it must be `0` or `1`, since every replica would run the controllers. |
 | resources | object | `{}` |  |
 | securityContext | object | `{}` |  |
-| strategy | object | `{"type":"Recreate"}` | The Deployment update strategy. `Recreate` stops the old pod before the new one starts, so two controllers never run at once during an upgrade. |
+| strategy | object | `{"type":"Recreate"}` | The Deployment update strategy. `Recreate` stops the old pod before the new one starts, so two controllers never run at once during an upgrade. `RollingUpdate` is safe once `leaderElection.enabled` is true. |
 | tolerations[0].effect | string | `"NoSchedule"` |  |
 | tolerations[0].key | string | `"node-role.kubernetes.io/control-plane"` |  |
 | tolerations[0].operator | string | `"Exists"` |  |

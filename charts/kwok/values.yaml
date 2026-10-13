@@ -27,14 +27,22 @@ nodeSelector: {}
 resources: {}
 affinity: {}
 
-# -- The replica count for Deployment, either `0` or `1`. kwok has no leader
-# election, so every replica would run the controllers.
+# -- The replica count for Deployment. Without `leaderElection.enabled` it
+# must be `0` or `1`, since every replica would run the controllers.
 replicas: 1
 
 # -- The Deployment update strategy. `Recreate` stops the old pod before the
 # new one starts, so two controllers never run at once during an upgrade.
+# `RollingUpdate` is safe once `leaderElection.enabled` is true.
 strategy:
   type: Recreate
+
+leaderElection:
+  # -- Run kwok with leader election, so several replicas can run with only
+  # one active. The lease lives in the release namespace. The Service also
+  # routes to standbys, which answer only health checks, so scrape metrics
+  # from the leader pod.
+  enabled: false
 
 # -- Change `hostNetwork` to `true` if you want to deploy in a kind cluster.
 hostNetwork: false

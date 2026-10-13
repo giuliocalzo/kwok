@@ -54,7 +54,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 KwokConfiguration mounted into the kwok container
 */}}
 {{- define "kwok.config" -}}
-{{- mergeOverwrite ($.Files.Get "conf/kwok.yaml" | fromYaml) (.Values.config | default dict) | toYaml }}
+{{- $config := $.Files.Get "conf/kwok.yaml" | fromYaml }}
+{{- if .Values.leaderElection.enabled }}
+{{- $config = mergeOverwrite $config (dict "options" (dict "leaderElection" (dict "leaderElect" true "resourceNamespace" .Release.Namespace))) }}
+{{- end }}
+{{- mergeOverwrite $config (.Values.config | default dict) | toYaml }}
 {{- end }}
 
 {{/*

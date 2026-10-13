@@ -31,7 +31,17 @@ tests:
     replicas: 2
   asserts:
   - failedTemplate:
-      errorPattern: "replicas must be 0 or 1"
+      errorPattern: "replicas must be 0 or 1 unless leaderElection\\.enabled is true: without leader election every replica would run the controllers$"
+
+- it: allows more than one replica with leader election
+  set:
+    replicas: 3
+    leaderElection:
+      enabled: true
+  asserts:
+  - equal:
+      path: spec.replicas
+      value: 3
 
 - it: recreates the pod on rollout by default so two controllers never overlap
   asserts:

@@ -46,3 +46,34 @@ tests:
   - matchRegex:
       path: data["kwok.yaml"]
       pattern: "(?m)^  enableCRDs:\n  - Stage\n  enableContentionProfiling"
+
+- it: leaves leader election out by default
+  asserts:
+  - notMatchRegex:
+      path: data["kwok.yaml"]
+      pattern: "leaderElection"
+
+- it: enables leader election in the release namespace
+  release:
+    namespace: sim
+  set:
+    leaderElection:
+      enabled: true
+  asserts:
+  - matchRegex:
+      path: data["kwok.yaml"]
+      pattern: "(?m)^  leaderElection:\n    leaderElect: true\n    resourceNamespace: sim$"
+
+- it: lets config override the leader election options
+  set:
+    leaderElection:
+      enabled: true
+    config:
+      options:
+        leaderElection:
+          resourceName: kwok-sim
+          resourceNamespace: leases
+  asserts:
+  - matchRegex:
+      path: data["kwok.yaml"]
+      pattern: "(?m)^  leaderElection:\n    leaderElect: true\n    resourceName: kwok-sim\n    resourceNamespace: leases$"
